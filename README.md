@@ -81,6 +81,8 @@ Each entry in `metadata.json` tracks:
   * `bitrate_kbps`
   * `audio_duration_sec`
 * Error tracking (`status`, `retry_count`, `error`)
+* Sequential `count` value (added on entry creation) to show how many
+  items have been recorded without having to iterate the file
 
 ---
 

@@ -48,6 +48,9 @@ class MetadataManager:
     def __init__(self, metadata_path: Path):
         self.metadata_path = metadata_path
         self.data = self._load()
+        # ensure every entry has a sequential count so users can
+        # quickly see how many items are stored without iterating
+        self._ensure_counts()
     
     def _load(self) -> Dict:
         """Load metadata from file."""
@@ -61,6 +64,22 @@ class MetadataManager:
         self.metadata_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.metadata_path, 'w', encoding='utf-8') as f:
             json.dump(self.data, f, indent=2, ensure_ascii=False)
+
+    def _ensure_counts(self):
+        """Add sequential `count` fields to any entries that lack it.
+
+        Existing metadata may have been written before this feature was
+        added.  When we load the file we walk existing items in insertion
+        order and fill in missing counts; the file is rewritten if
+        anything changed.
+        """
+        changed = False
+        for idx, (vid, entry) in enumerate(self.data.items(), start=1):
+            if 'count' not in entry:
+                entry['count'] = idx
+                changed = True
+        if changed:
+            self.save()
     
     def video_exists(self, video_id: str) -> bool:
         """Check if video already downloaded."""
@@ -68,7 +87,16 @@ class MetadataManager:
         return entry.get('status') == 'completed'
     
     def create_entry(self, video_id: str, url: str, info: Dict):
-        """Create metadata entry for new video."""
+        """Create metadata entry for new video.
+
+        A `count` field is added to each entry; it simply reflects the
+        order in which videos were added so that someone reading the
+        JSON can immediately know how many items exist.  The video ID
+        remains the dictionary key for lookup, so `count` is purely
+        informational.
+        """
+        # compute sequential count based on current number of entries
+        entry_count = len(self.data) + 1
         self.data[video_id] = {
             'video_id': video_id,
             'url': url,
@@ -82,7 +110,8 @@ class MetadataManager:
             'file_size_bytes': None,
             'audio_properties': {},
             'retry_count': 0,
-            'error': None
+            'error': None,
+            'count': entry_count
         }
         self.save()
     
@@ -132,51 +161,67 @@ class YouTubeAudioDownloader:
         self.metadata = MetadataManager(self.output_dir / 'metadata.json')
     
     def extract_video_ids(self, url: str) -> List[str]:
-        """Extract video IDs from URL (handles single video, playlist, channel)."""
-        # Fix channel URLs to point to videos tab
-        if '@' in url or '/c/' in url or '/channel/' in url or '/user/' in url:
-            if not url.endswith('/videos'):
-                url = url.rstrip('/') + '/videos'
-        
+        """Extract video IDs from URL (handles single video, playlist, channel with all content types)."""
+        # Determine if this is a channel URL
+        is_channel = '@' in url or '/c/' in url or '/channel/' in url or '/user/' in url
+
+        # Prepare URLs to process
+        urls_to_process = []
+        if is_channel:
+            # Remove any existing tab from URL
+            base_url = url.rstrip('/')
+            for tab in ['/videos', '/shorts', '/streams']:
+                base_url = base_url.replace(tab, '')
+
+            # Add all three tabs
+            urls_to_process = [
+                base_url + '/videos',
+                base_url + '/shorts',
+                base_url + '/streams'
+            ]
+        else:
+            urls_to_process = [url]
+
         ydl_opts = {
             'quiet': False,
             'extract_flat': 'in_playlist',
             'skip_download': True,
             'ignoreerrors': True,
         }
-        
+
         video_ids = []
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                
-                if not info:
-                    print(f"❌ Could not extract info from URL")
-                    return []
-                
-                if 'entries' in info:
-                    # Playlist or channel
-                    for entry in info['entries']:
-                        if entry and 'id' in entry:
-                            # Skip if ID looks like a channel/user ID
-                            if not entry['id'].startswith('UC') or len(entry['id']) != 24:
-                                video_ids.append(entry['id'])
-                            elif 'url' in entry:
-                                # Extract video ID from URL
-                                match = re.search(r'(?:v=|/)([a-zA-Z0-9_-]{11})(?:[&/]|$)', entry['url'])
-                                if match:
-                                    video_ids.append(match.group(1))
-                else:
-                    # Single video
-                    if 'id' in info:
-                        video_ids.append(info['id'])
-        
-        except Exception as e:
-            print(f"❌ Error extracting video IDs: {e}")
-            import traceback
-            traceback.print_exc()
-            return []
-        
+
+        for current_url in urls_to_process:
+            try:
+                print(f"🔄 Processing: {current_url}")
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info = ydl.extract_info(current_url, download=False)
+
+                    if not info:
+                        print(f"⚠️  Could not extract info from URL")
+                        continue
+
+                    if 'entries' in info:
+                        # Playlist or channel
+                        for entry in info['entries']:
+                            if entry and 'id' in entry:
+                                # Skip if ID looks like a channel/user ID
+                                if not entry['id'].startswith('UC') or len(entry['id']) != 24:
+                                    video_ids.append(entry['id'])
+                                elif 'url' in entry:
+                                    # Extract video ID from URL
+                                    match = re.search(r'(?:v=|/)([a-zA-Z0-9_-]{11})(?:[&/]|$)', entry['url'])
+                                    if match:
+                                        video_ids.append(match.group(1))
+                    else:
+                        # Single video
+                        if 'id' in info:
+                            video_ids.append(info['id'])
+
+            except Exception as e:
+                print(f"⚠️  Error extracting from {current_url}: {e}")
+                continue
+
         # Remove duplicates while preserving order
         seen = set()
         unique_ids = []
@@ -184,7 +229,7 @@ class YouTubeAudioDownloader:
             if vid not in seen and len(vid) == 11:  # YouTube video IDs are 11 chars
                 seen.add(vid)
                 unique_ids.append(vid)
-        
+
         return unique_ids
     
     def get_video_info(self, video_id: str) -> Optional[Dict]:
