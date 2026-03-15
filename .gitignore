@@ -8,4 +8,4 @@ wheels/
 downloads/
 # Virtual environments
 .venv
-
+.env
