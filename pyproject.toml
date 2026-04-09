@@ -5,6 +5,8 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
 dependencies = [
+    "audio-separator[gpu]==0.35.0",
+    "nemo-toolkit[asr]>=2.7.2",
     "yt-dlp>=2023.11.16",
 ]
 
