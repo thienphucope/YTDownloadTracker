@@ -95,7 +95,9 @@ This metadata serves as the single source of truth for dataset tracking and prev
 Expected command:
 
 ```bash
-uv run python .\main.py https://www.youtube.com/@SolusAstorias -d solus -q best
+uv run python .\downloadYT.py https://www.youtube.com/@SolusAstorias -d solus -q best
 ```
 
 **Note:** Using `-d solus` will automatically create the dataset folder at `downloads/solus/` with the default structure.
+
+
