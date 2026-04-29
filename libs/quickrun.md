@@ -1,0 +1,1 @@
+uv run python -m src.getData.downloadYouTube download "https://youtube.com/playlist?list=PLo2L9JmoQoy_hZVVHu1HJ2scZnn-VTt9k&si=gZ17A8QQ_3Mfjq9c" -d moxxi -a low
